@@ -1,0 +1,4 @@
+interface:
+  display_name: "Study Notes System"
+  short_description: "Organize study materials into durable learning layers"
+  default_prompt: "Use $study-notes-system to organize scattered study materials into plan, source, notes, review, practice, and snippets."
