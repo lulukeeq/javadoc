@@ -8,18 +8,8 @@
 - [Java异常-速记.md](e:/study/javadoc/03-复习速记/Java异常-速记.md)
 - [Java实体类规范-速记.md](e:/study/javadoc/03-复习速记/Java实体类规范-速记.md)
 - [多表查询-连接-子查询-速记.md](e:/study/javadoc/03-复习速记/多表查询-连接-子查询-速记.md)
-
-这里放适合快速回顾的短笔记，不追求全面，重点是：
-
-- 关键词
-- 易错点
-- 面试短答
-- 模板化记法
-
-当前速记：
-
-- [Java异常-速记.md](e:/study/javadoc/03-复习速记/Java异常-速记.md)
-- [多表查询-连接-子查询-速记.md](e:/study/javadoc/03-复习速记/多表查询-连接-子查询-速记.md)
+- [Java集合框架-Map-速记.md](e:/study/javadoc/03-复习速记/Java集合框架-Map-速记.md)
+- [Java集合框架-Stream-速记.md](e:/study/javadoc/03-复习速记/Java集合框架-Stream-速记.md)
 
 使用建议：
 
