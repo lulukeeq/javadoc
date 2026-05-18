@@ -11,6 +11,7 @@
 当前主题：
 
 - [员工管理模块学习笔记.md](e:/study/javadoc/02-学习笔记/员工管理模块学习笔记.md)
+- [登录认证学习笔记.md](e:/study/javadoc/02-学习笔记/登录认证学习笔记.md)
 - [Java异常学习笔记.md](e:/study/javadoc/02-学习笔记/Java异常学习笔记.md)
 - [Java程序操作数据库学习清单.md](e:/study/javadoc/02-学习笔记/Java程序操作数据库学习清单.md)
 - [SQL子查询学习笔记.md](e:/study/javadoc/02-学习笔记/SQL子查询学习笔记.md)

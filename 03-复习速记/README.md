@@ -5,6 +5,7 @@
 当前速记：
 
 - [员工管理与事务-速记.md](e:/study/javadoc/03-复习速记/员工管理与事务-速记.md)
+- [登录认证-速记.md](e:/study/javadoc/03-复习速记/登录认证-速记.md)
 - [Java异常-速记.md](e:/study/javadoc/03-复习速记/Java异常-速记.md)
 - [Java实体类规范-速记.md](e:/study/javadoc/03-复习速记/Java实体类规范-速记.md)
 - [多表查询-连接-子查询-速记.md](e:/study/javadoc/03-复习速记/多表查询-连接-子查询-速记.md)
