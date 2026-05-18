@@ -247,4 +247,378 @@ public class XxxApplication {
 
 ---
 
+## 四、自动配置源码跟踪
+
+### 1. @SpringBootApplication 三大组成
+
+`@SpringBootApplication` 标在启动类上，是 SpringBoot **最最最重要**的注解，本质是三个注解的组合：
+
+| 组成注解 | 作用 |
+|---------|------|
+| `@SpringBootConfiguration` | 等价于 `@Configuration`，声明启动类本身也是一个配置类 |
+| `@ComponentScan` | 组件扫描，默认扫描启动类所在包及其子包 |
+| `@EnableAutoConfiguration` | **自动配置的总开关**，核心注解 |
+
+> 接上一章：`@ComponentScan` 解释了为什么自己的包能被扫到（也解释了第三方包扫不到）；`@EnableAutoConfiguration` 才是解决第三方 bean 自动装配的那一环。
+
+### 2. @EnableAutoConfiguration 拆解
+
+点进 `@EnableAutoConfiguration`，里面又是两个：
+
+```java
+@AutoConfigurationPackage
+@Import(AutoConfigurationImportSelector.class)   // ← 又见 @Import + ImportSelector
+public @interface EnableAutoConfiguration {
+```
+
+**和第三章完全呼应**：144 自己写的 `@EnableHeaderConfig` 内部是 `@Import(MyImportSelector.class)`；SpringBoot 官方就是同一套路，只是 Selector 换成了官方的 `AutoConfigurationImportSelector`。
+
+### 3. AutoConfigurationImportSelector 干了什么
+
+它实现了 `ImportSelector`，重写 `selectImports()` 返回 `String[]`（一堆要装配的类的全限定名）。
+
+这些类名不是写死的，而是**读配置文件**得到的：
+
+```text
+spring-boot-autoconfigure-3.1.3.jar
+  └─ META-INF/spring/
+       └─ org.springframework.boot.autoconfigure.AutoConfiguration.imports
+```
+
+文件内容就是一长串自动配置类的全限定名，例如：
+
+```text
+org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+org.springframework.boot.autoconfigure.jpa.JpaRepositoriesAutoConfiguration
+...（几十上百个 XxxAutoConfiguration）
+```
+
+`selectImports()` 把这个文件里所有类名读出来返回 → Spring 把这些 `XxxAutoConfiguration` 配置类全部加载，配置类里的 `@Bean` 就进了 IOC 容器。
+
+### 4. 版本差异（易错点）
+
+| SpringBoot 版本 | 自动配置类清单文件 |
+|----------------|------------------|
+| 2.7.0 **及以后** | `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` |
+| 2.7.0 **以前** | `META-INF/spring.factories` |
+
+> 面试常问"自动配置类从哪来"——新版答 `.imports` 文件，老版答 `spring.factories`，最好两个都提。
+
+### 5. @Conditional 按需装配
+
+> ⚠️ **关键误区（课程红字强调）**
+> `.imports` 文件里那上百个 `XxxAutoConfiguration` 会**全部注册为 IOC 容器的 bean 吗？**
+> **NO！** `selectImports()` 只是把它们当成**候选清单**全读进来，并不代表全部生效。
+
+清单里有上百个 `XxxAutoConfiguration`，但不可能全生效（没引 Redis 依赖就配 Redis bean 会报错）。靠 `@Conditional` 系列注解**按条件筛选**，只有满足条件的那几个才真正装配：
+
+| 条件注解 | 生效条件 |
+|---------|---------|
+| `@ConditionalOnClass` | classpath 下存在某个类（即引了对应依赖）才生效 |
+| `@ConditionalOnMissingBean` | 容器里没有该类型 bean 时才生效（**给用户留覆盖余地**） |
+| `@ConditionalOnProperty` | 配置文件里某属性满足条件才生效 |
+
+例（`@ConditionalOnMissingBean` 的意义）：
+
+```java
+@Bean
+@ConditionalOnMissingBean      // 你没自己配 Gson，它才帮你配；你配了就用你的
+public Gson gson(GsonBuilder gsonBuilder) {
+    return gsonBuilder.create();
+}
+```
+
+> 所以自动配置不是"全装"，而是"**有依赖才装 + 你没配它才配**"，既不报错也不覆盖用户。
+
+### 6. 完整闭环（背这一段）
+
+```text
+@SpringBootApplication
+  └─ @EnableAutoConfiguration                         自动配置总开关
+       └─ @Import(AutoConfigurationImportSelector)    官方 ImportSelector
+            └─ selectImports() 读 jar 包里的
+               META-INF/spring/...AutoConfiguration.imports   （旧版：spring.factories）
+                 └─ 拿到上百个 XxxAutoConfiguration 类名
+                      └─ 逐个 @Conditional 判断 → 满足条件的才真正装配
+                           └─ 配置类里的 @Bean 进 IOC → 用户 @Autowired 直接用
+```
+
+**一句话总结：**
+
+> 引入 starter → `@EnableAutoConfiguration` 通过 `AutoConfigurationImportSelector` 读 `.imports` 文件拿到所有候选自动配置类 → 用 `@Conditional` 按需筛选 → 满足条件的配置类把 bean 装进容器，使用者完全无感。
+
+---
+
+## 五、@Conditional 条件装配
+
+### 1. 定义
+
+| 项 | 内容 |
+|----|------|
+| 作用 | 按一定**条件判断**，满足条件才把对应 bean 注册到 IOC 容器 |
+| 位置 | 方法、类（标方法上控制单个 `@Bean`；标类上控制整个配置类） |
+| 本质 | `@Conditional` 是**父注解**，派生出一大批 `@ConditionalOnXxx` 子注解 |
+
+> 第四章说"自动配置类不是全装，靠 `@Conditional` 筛"——本章就是把这个筛选机制讲透。
+
+### 2. 派生子注解一览（部分）
+
+`@ConditionalOnBean` / `OnClass` / `OnMissingBean` / `OnMissingClass` / `OnProperty` / `OnExpression` / `OnResource` / `OnJava` / `OnWebApplication` / `OnNotWebApplication` / `OnSingleCandidate` …
+
+**最常用三个（重点记）：**
+
+| 子注解 | 生效条件 |
+|--------|---------|
+| `@ConditionalOnClass` | 环境中**存在**对应字节码文件（引了对应依赖），才注册 |
+| `@ConditionalOnMissingBean` | 环境中**没有**对应的 bean（按类型 或 名称），才注册 |
+| `@ConditionalOnProperty` | 配置文件中有对应**属性和值**，才注册 |
+
+### 3. 三个实操演示（同一个 HeaderParser bean）
+
+```java
+@Configuration
+public class HeaderConfig {
+
+    @Bean
+    @ConditionalOnClass(name = "io.jsonwebtoken.Jwts")
+    // 环境中有 io.jsonwebtoken.Jwts 这个类（引了 jjwt 依赖）才创建 bean
+    public HeaderParser headerParser() {
+        return new HeaderParser();
+    }
+}
+```
+
+> 细节：参数用 `name = "全限定名字符串"` 而不是 `value = Jwts.class`。
+> 因为如果直接写 `.class`，类不存在编译期就报错；用字符串则**延迟到运行期反射判断**，类不在也不报错——这正是自动配置能引用一堆可能没引入的类却不崩的原因。
+
+```java
+    @Bean
+    @ConditionalOnMissingBean
+    // 容器中没有 HeaderParser 类型的 bean 才创建
+    public HeaderParser headerParser() {
+        return new HeaderParser();
+    }
+```
+
+> 不写参数时，按**方法返回值类型**判断（这里即 `HeaderParser`）。也可显式指定类型或名称。
+> 用途：给自动配置兜底——用户自己配了就用用户的，没配框架才补默认（呼应第四章 Gson 的例子）。
+
+```java
+    @Bean
+    @ConditionalOnProperty(name = "myname", havingValue = "itheima")
+    // application.yml 中 myname 的值等于 itheima 才创建
+    public HeaderParser headerParser() {
+        return new HeaderParser();
+    }
+```
+
+> 常用于"配置开关"：通过 `prefix`（前缀）+ `name`（属性名）+ `havingValue`（期望值）控制某功能 bean 是否启用。
+
+### 4. 与自动配置的闭环
+
+```text
+@ConditionalOnClass        →  引了依赖才装（解决"没依赖也装会报错"）
+@ConditionalOnMissingBean  →  用户没配它才装（解决"覆盖用户配置"）
+@ConditionalOnProperty     →  配置开关控制装不装（解决"按需开关功能"）
+```
+
+> 一句话：`@Conditional` 是自动配置"按需、不冲突、可开关"的实现基础；上百个 `XxxAutoConfiguration` 之所以不会全生效，全靠这些子注解逐个把关。
+
+---
+
+## 六、核心问答（小结·考点）
+
+课程小结的三连问，直接当面试答案背：
+
+**Q1：`@Conditional` 及其衍生注解的作用是什么？**
+
+> 满足给定条件后，才注册对应的 bean 对象到 Spring IOC 容器中。
+
+**Q2：`@Conditional` 及其衍生注解可以作用在什么地方？**
+
+> - 方法上：只针对当前这个方法声明的 bean
+> - 类上：针对这个类中所有方法声明的 bean
+
+**Q3：自己定义自动配置类的核心是什么？如何完成自动配置？（自定义 starter 的本质）**
+
+> 1. 定义自动配置类（配置类 + `@Bean` + `@ConditionalOnXxx`）
+> 2. 把自动配置类的全限定名写进
+>    `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` 文件
+>
+> 这样别人引入你的依赖后，`AutoConfigurationImportSelector` 会读这个文件加载你的配置类 → 满足 `@Conditional` 条件的 bean 自动进容器，使用者零配置。
+> （旧版 ≤2.7.0 是写进 `META-INF/spring.factories`）
+
+> 串起来：第三章讲"怎么把别人的 bean 装进来（@Import/ImportSelector）"，第四章讲"SpringBoot 怎么自动找到这些配置类（.imports）"，第五章讲"怎么按需筛选（@Conditional）"，Q3 就是把这三步反过来——**自己造一个 starter** 的完整步骤。
+
+---
+
+## 七、自定义 starter 实战（原理篇收官）
+
+### 1. 场景
+
+实际开发中常把公共组件封装成 SpringBoot starter，提供给各项目团队复用——别人**引一个依赖 + 配几行 yml** 就能用，不用关心内部实现。starter 同时含**起步依赖**和**自动配置**两块能力。
+
+### 2. 通用结构：starter 一定是"双模块"
+
+观察任何 starter（官方或第三方），都是成对出现：
+
+| 模块 | 后缀 | 职责 |
+|------|------|------|
+| `xxx-spring-boot-starter` | `-starter` | **依赖管理**：空壳，只聚合依赖坐标，是别人引入的入口 |
+| `xxx-spring-boot-autoconfigure` | `-autoconfigure` | **自动配置**：真正干活，放配置类、工具类、`@Conditional`、`.imports` |
+
+> starter 模块依赖 autoconfigure 模块；使用者只引 starter，autoconfigure 靠依赖传递跟着进来。
+
+实例对照（都遵守这个规律）：
+
+```text
+SpringBoot 官方   spring-boot-starter        + spring-boot-autoconfigure
+MyBatis 提供      mybatis-spring-boot-starter + mybatis-spring-boot-autoconfigure
+PageHelper 提供   pagehelper-spring-boot-starter + pagehelper-spring-boot-autoconfigure
+```
+
+> 呼应第二章"starter 本质=依赖清单 pom"：原来官方 starter 之所以引一个就够，是因为它内部依赖了对应的 autoconfigure。
+
+### 3. 案例需求
+
+- **需求**：自定义 `aliyun-oss-spring-boot-starter`，完成阿里云 OSS 操作工具类 `AliyunOSSOperator` 的自动配置。
+- **目标**：使用方引入起步依赖后，直接 `@Autowired AliyunOSSOperator` 就能用，零手动配置。
+
+### 4. 实现三步骤总览
+
+```text
+1. 创建 aliyun-oss-spring-boot-starter 模块（依赖管理：pom 聚合，引入 autoconfigure）
+2. 创建 aliyun-oss-spring-boot-autoconfigure 模块，并在 starter 模块中引入它
+3. 在 autoconfigure 模块中：
+   ① 写配置属性类 AliyunOSSProperties（@ConfigurationProperties 接收 yml 配置）
+   ② 写工具类 AliyunOSSOperator（真正干活）
+   ③ 写自动配置类 AliyunOSSAutoConfiguration（@Bean 把工具类装进容器）
+   ④ 把自动配置类全限定名写进
+      META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
+```
+
+> 第三步④就是第四/六章 Q3 的亲手实现：`AutoConfigurationImportSelector` 去读这个 `.imports` 文件，发现并加载我们的配置类。
+
+### 5. autoconfigure 模块代码
+
+**① 配置属性类（接收使用者 yml 的配置）**
+
+```java
+@Data
+@ConfigurationProperties(prefix = "aliyun.oss")   // 绑定 yml 中 aliyun.oss.* 的配置
+public class AliyunOSSProperties {
+    private String endpoint;
+    private String accessKeyId;
+    private String accessKeySecret;
+    private String bucketName;
+}
+```
+
+> `@ConfigurationProperties(prefix=...)` 把配置文件里 `aliyun.oss.endpoint` 等自动映射到字段。
+> 单独写它**还不够**，必须靠下面的 `@EnableConfigurationProperties` 让它生效并进容器。
+
+**② 工具类（真正干活的，依赖配置类）**
+
+```java
+public class AliyunOSSOperator {
+
+    private final AliyunOSSProperties properties;
+
+    public AliyunOSSOperator(AliyunOSSProperties properties) {
+        this.properties = properties;            // 构造注入配置
+    }
+
+    public String upload(byte[] content, String originalFilename) throws Exception {
+        String endpoint        = properties.getEndpoint();
+        String bucketName      = properties.getBucketName();
+        // 用阿里云 OSS SDK 上传，省略具体调用，返回访问 URL
+        // OSS ossClient = new OSSClientBuilder().build(endpoint, ak, sk);
+        // ossClient.putObject(bucketName, objectName, new ByteArrayInputStream(content));
+        return "https://" + bucketName + "." + endpoint + "/" + originalFilename;
+    }
+}
+```
+
+**③ 自动配置类（把工具类注册成 bean）**
+
+```java
+@Configuration
+@EnableConfigurationProperties(AliyunOSSProperties.class)   // 让 @ConfigurationProperties 生效
+public class AliyunOSSAutoConfiguration {
+
+    @Bean
+    @ConditionalOnMissingBean              // 用户没自己配才用默认（兜底，呼应第五章）
+    public AliyunOSSOperator aliyunOSSOperator(AliyunOSSProperties properties) {
+        return new AliyunOSSOperator(properties);
+    }
+}
+```
+
+**④ 注册自动配置类**（resources 下，路径名一字不能错）：
+
+```text
+src/main/resources/
+  └─ META-INF/spring/
+       └─ org.springframework.boot.autoconfigure.AutoConfiguration.imports
+```
+
+文件内容只有一行（全限定名）：
+
+```text
+com.aliyun.oss.AliyunOSSAutoConfiguration
+```
+
+### 6. starter 模块（只有 pom，无代码）
+
+`aliyun-oss-spring-boot-starter` 的 `pom.xml` 里：引入 `aliyun-oss-spring-boot-autoconfigure` + 阿里云 OSS SDK 等真正要用的依赖。使用者只引 starter，这些靠依赖传递全进来。
+
+### 7. 使用方怎么用（验证零配置）
+
+```xml
+<dependency>
+    <groupId>com.aliyun.oss</groupId>
+    <artifactId>aliyun-oss-spring-boot-starter</artifactId>
+    <version>1.0-SNAPSHOT</version>
+</dependency>
+```
+
+```yaml
+# application.yml —— 前缀对应 @ConfigurationProperties 的 prefix
+aliyun:
+  oss:
+    endpoint: https://oss-cn-hangzhou.aliyuncs.com
+    access-key-id: xxx
+    access-key-secret: xxx
+    bucket-name: my-bucket
+```
+
+```java
+@RestController
+public class UploadController {
+    @Autowired
+    private AliyunOSSOperator aliyunOSSOperator;   // 直接注入，无需任何手动配置
+}
+```
+
+### 8. @EnableConfigurationProperties vs @ConfigurationProperties（易错点）
+
+| 注解 | 作用 | 加在哪 |
+|------|------|--------|
+| `@ConfigurationProperties(prefix)` | 声明"我要绑定哪段配置" | 属性类（`AliyunOSSProperties`）上 |
+| `@EnableConfigurationProperties(X.class)` | 让 X 这个属性类生效并注册成 bean | 自动配置类上 |
+
+> 两者**必须配合**。在自定义 starter 里属性类一般不加 `@Component`（避免依赖组件扫描），改用 `@EnableConfigurationProperties` 显式启用——更可控，也符合 starter 不该依赖使用者扫描范围的原则。
+
+### 9. 收官闭环
+
+```text
+起步依赖（二章）  → starter 模块聚合依赖
+@Import/Selector（三章）+ .imports（四/六章） → autoconfigure 被自动发现加载
+@Conditional（五章） → @ConditionalOnMissingBean 兜底，不覆盖用户
+@ConfigurationProperties（七章） → 把使用者 yml 注入工具类
+= 别人引依赖 + 配 yml + @Autowired 直接用，零配置
+```
+
+---
+
 > 创建时间：2026-05-18
