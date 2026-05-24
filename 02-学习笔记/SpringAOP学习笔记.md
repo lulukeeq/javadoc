@@ -690,5 +690,261 @@ public Object around(ProceedingJoinPoint joinPoint) throws Throwable {
 
 ---
 
+## 十、AOP 案例：操作日志
+
+前面学的 AOP 基础和进阶，真正落到项目里时，一个很典型的场景就是：
+
+> 对新增、修改、删除这类关键操作，统一记录系统操作日志。
+
+### 1. 为什么这个场景适合 AOP
+
+如果不用 AOP，`save()`、`update()`、`delete()` 这些方法里都要手动写一遍日志逻辑：
+
+- 记录谁操作了
+- 记录调用了哪个方法
+- 记录传了什么参数
+- 记录操作时间
+
+这样会出现两个问题：
+
+1. 重复代码很多
+2. 业务代码里掺杂了大量“非业务逻辑”
+
+所以这个场景最适合交给 AOP 处理。
+
+一句话：
+
+> 日志不是核心业务，但又几乎处处都要，所以非常适合抽成切面。
+
+### 2. 为什么这里更适合注解匹配
+
+记录操作日志时，通常不是所有方法都记，而是只记：
+
+- 新增
+- 修改
+- 删除
+- 审核
+- 导入导出
+
+也就是说，这种需求更像：
+
+> 只增强“少量关键方法”，而不是按整包所有方法统一增强。
+
+所以相比 `execution(...)`，这里通常更适合：
+
+```java
+@annotation(...)
+```
+
+因为它的思路是：
+
+- 想记日志的方法，就贴一个注解
+- 不想记日志的方法，就不贴
+
+这比写一长串表达式更直观，也更适合后期维护。
+
+### 3. 操作日志案例的基本链路
+
+```text
+1. 自定义一个日志注解
+2. 在需要记录日志的方法上贴注解
+3. AOP 用 @annotation 匹配这些方法
+4. 在通知里拿到方法名、参数、执行时间等信息
+5. 统一记录日志
+```
+
+### 4. 第一步：定义自定义注解
+
+例如定义一个操作日志注解：
+
+```java
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface LogOperation {
+    String value() default "";
+}
+```
+
+关键点：
+
+- `@Target(ElementType.METHOD)`：表示这个注解贴在方法上
+- `@Retention(RetentionPolicy.RUNTIME)`：表示运行时仍然保留，AOP 才能识别
+
+### 5. 第二步：在目标方法上贴注解
+
+例如：
+
+```java
+@LogOperation("删除部门")
+@DeleteMapping("/{id}")
+public Result delete(@PathVariable Integer id) {
+    deptService.delete(id);
+    return Result.success();
+}
+```
+
+或者：
+
+```java
+@LogOperation("新增员工")
+@PostMapping
+public Result save(@RequestBody Emp emp) {
+    empService.save(emp);
+    return Result.success();
+}
+```
+
+这个动作本质上是在说：
+
+> 这些方法属于“关键操作”，需要被日志切面增强。
+
+### 6. 第三步：切面统一拦截
+
+切面可以这样写：
+
+```java
+@Slf4j
+@Aspect
+@Component
+public class LogAspect {
+
+    @Around("@annotation(com.itheima.anno.LogOperation)")
+    public Object recordLog(ProceedingJoinPoint joinPoint) throws Throwable {
+        long begin = System.currentTimeMillis();
+        Object result = joinPoint.proceed();
+        long end = System.currentTimeMillis();
+
+        String methodName = joinPoint.getSignature().getName();
+        Object[] args = joinPoint.getArgs();
+
+        log.info("方法名: {}, 参数: {}, 执行耗时: {} ms",
+                methodName, Arrays.toString(args), end - begin);
+
+        return result;
+    }
+}
+```
+
+这个案例里，前面学过的知识点几乎都串起来了：
+
+- `@annotation`：按注解匹配
+- `@Around`：前后都能包住
+- `ProceedingJoinPoint`：负责执行原方法
+- `getSignature()`：拿方法名
+- `getArgs()`：拿参数
+
+### 7. 如果方法抛异常怎么办
+
+操作日志场景里，一个常见问题是：
+
+> 如果目标方法执行失败了，日志还要不要记？
+
+这取决于业务需求。
+
+#### 方式一：只记录成功日志
+
+那就像前面的普通 `@Around` 一样，`proceed()` 成功后再记日志。
+
+#### 方式二：成功和失败都记录
+
+那就更适合在 `@Around` 里自己写 `try-catch-finally`，或者组合使用：
+
+- `@AfterReturning`：记录成功
+- `@AfterThrowing`：记录失败
+
+简单理解：
+
+> 想区分“成功日志”和“失败日志”，可以把两类通知拆开写。
+
+### 8. 为什么日志案例能帮你吃透 AOP
+
+这个案例把前面抽象概念全部落地了：
+
+| 前面学的概念 | 在日志案例里的体现 |
+|------|------|
+| 切面 | `LogAspect` |
+| 切入点 | `@annotation(LogOperation)` |
+| 通知 | 记录方法名、参数、耗时的逻辑 |
+| 连接点 | 被贴了 `@LogOperation` 的方法 |
+| JoinPoint / ProceedingJoinPoint | 拿方法信息、执行原方法 |
+
+所以操作日志案例其实不是新知识，而是：
+
+> 用真实业务场景把 AOP 的基础知识重新串一遍。
+
+---
+
+## 十一、AOP 案例的项目落点
+
+学完案例后，更重要的是知道：
+
+> 在真实项目里，什么逻辑适合交给 AOP，什么逻辑不适合。
+
+### 1. 适合放进 AOP 的逻辑
+
+这类逻辑通常具备两个特点：
+
+- 很多地方都会用到
+- 不是某个业务方法本身的核心职责
+
+例如：
+
+- 操作日志
+- 性能统计
+- 权限校验
+- 参数校验的公共增强
+- 事务控制
+
+### 2. 不适合放进 AOP 的逻辑
+
+如果某段逻辑本身就是业务核心，就不适合硬塞到切面里。
+
+例如：
+
+- 计算订单金额
+- 判断员工是否可以转正
+- 生成工资条
+
+因为这些逻辑和业务强绑定，放进切面会让代码难理解、难追踪。
+
+一句话：
+
+> AOP 更适合“横切关注点”，不适合承载主业务本身。
+
+### 3. 为什么案例里常说“让 Controller / Service 更干净”
+
+因为用 AOP 后，业务方法可以只关心自己的主职责。
+
+例如原来 `delete()` 里可能写：
+
+```java
+public void delete(Integer id) {
+    log.info("开始删除: {}", id);
+    deptMapper.delete(id);
+    log.info("删除完成: {}", id);
+}
+```
+
+用了 AOP 后，业务方法可以只保留：
+
+```java
+public void delete(Integer id) {
+    deptMapper.delete(id);
+}
+```
+
+然后把“记录日志、统计耗时、打印参数”统一放到切面里。
+
+这就是“解耦”的直观体现。
+
+### 4. 当前这两节案例真正要记住什么
+
+1. AOP 案例最典型的落点之一就是操作日志
+2. 关键操作日志通常更适合 `@annotation`
+3. `@Around + ProceedingJoinPoint + getArgs/getSignature` 是最常见组合
+4. AOP 的价值不是炫技，而是把重复公共逻辑从业务代码中剥离出去
+
+---
+
 > 创建时间：2026-05-13
-> 最近更新：2026-05-14
+> 最近更新：2026-05-24
