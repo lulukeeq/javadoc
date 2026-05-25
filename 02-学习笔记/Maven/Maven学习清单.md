@@ -1326,6 +1326,287 @@ Maven 仓库可以分为：
 5. `SNAPSHOT` 版本通常放快照仓库
 6. 私服解决的是“团队内部依赖共享和统一管理”的问题
 
+#### 9.7 上传和下载的两条线
+
+私服资源使用时，可以分成两条线：
+
+```text
+上传：把自己项目构建出来的 jar 发布到私服
+下载：其他项目通过 Maven 坐标从私服使用这个 jar
+```
+
+##### 上传资源
+
+上传资源适用于公司内部公共模块。
+
+例如：
+
+```text
+tlias-utils
+company-utils
+统一认证模块
+公司内部 starter
+```
+
+这些模块不适合上传到 Maven 中央仓库，但又希望多个项目复用，所以发布到公司私服。
+
+上传资源的基本步骤：
+
+1. 在 Maven `settings.xml` 中配置访问私服的账号密码
+2. 在项目 `pom.xml` 中配置上传地址
+3. 执行 `mvn deploy`
+4. 到 Nexus 私服页面查看资源是否上传成功
+
+##### 下载资源
+
+下载资源适用于其他项目使用已经发布到私服里的 jar。
+
+基本步骤：
+
+1. 在 Maven `settings.xml` 中配置私服仓库组入口
+2. 在项目 `pom.xml` 中写依赖坐标
+3. Maven 自动按顺序查找依赖
+
+下载查找顺序：
+
+```text
+本地仓库 -> 私服 -> 中央仓库
+```
+
+一句话：
+
+> 上传是把自己的 jar 放到私服，下载是从私服把别人发布的 jar 拿下来用。
+
+#### 9.8 `install` 和 `deploy` 的区别
+
+这两个命令很容易混。
+
+| 命令 | 作用 | 目标位置 |
+|------|------|----------|
+| `mvn install` | 安装到本地仓库 | 本机 Maven 仓库 |
+| `mvn deploy` | 发布到远程仓库 | 公司私服 |
+
+最短记法：
+
+```text
+install 到本地
+deploy 到私服
+```
+
+例如 `tlias-utils` 打包后：
+
+```bash
+mvn install
+```
+
+表示把 `tlias-utils` 安装到自己电脑的本地仓库。
+
+```bash
+mvn deploy
+```
+
+表示把 `tlias-utils` 发布到公司私服，让其他项目也能使用。
+
+#### 9.9 release 和 snapshot 仓库
+
+私服里通常会区分正式版本和快照版本。
+
+| 版本类型 | 示例 | 存放仓库 | 特点 |
+|----------|------|----------|------|
+| RELEASE | `1.0.0` | `maven-releases` | 功能稳定，通常不再频繁改 |
+| SNAPSHOT | `1.0-SNAPSHOT` | `maven-snapshots` | 开发中，可能频繁变化 |
+
+判断规则：
+
+```text
+版本号带 SNAPSHOT -> maven-snapshots
+版本号不带 SNAPSHOT -> maven-releases
+```
+
+例如：
+
+```xml
+<version>1.0-SNAPSHOT</version>
+```
+
+执行 `deploy` 后，会上传到快照仓库。
+
+如果是：
+
+```xml
+<version>1.0.0</version>
+```
+
+执行 `deploy` 后，会上传到正式仓库。
+
+#### 9.10 上传资源需要的配置
+
+上传资源到私服，需要两个核心配置：
+
+```text
+1. 访问私服的账号密码
+2. 发布资源的目标地址
+```
+
+##### `settings.xml` 中配置账号密码
+
+账号密码配置在 Maven 的 `settings.xml` 中，使用 `servers`。
+
+例如：
+
+```xml
+<server>
+    <id>maven-releases</id>
+    <username>admin</username>
+    <password>admin</password>
+</server>
+
+<server>
+    <id>maven-snapshots</id>
+    <username>admin</username>
+    <password>admin</password>
+</server>
+```
+
+这里的 `server` 只负责认证信息：
+
+```text
+访问哪个仓库时，用哪个账号密码。
+```
+
+##### `pom.xml` 中配置上传地址
+
+上传地址配置在项目 `pom.xml` 中，使用 `distributionManagement`。
+
+例如：
+
+```xml
+<distributionManagement>
+    <repository>
+        <id>maven-releases</id>
+        <url>http://192.168.150.101:8081/repository/maven-releases/</url>
+    </repository>
+    <snapshotRepository>
+        <id>maven-snapshots</id>
+        <url>http://192.168.150.101:8081/repository/maven-snapshots/</url>
+    </snapshotRepository>
+</distributionManagement>
+```
+
+其中：
+
+- `repository`：正式版本上传地址
+- `snapshotRepository`：快照版本上传地址
+
+注意：
+
+> `distributionManagement` 里的 `id` 要和 `settings.xml` 里 `server` 的 `id` 对应。
+
+例如 `pom.xml` 里写：
+
+```xml
+<id>maven-snapshots</id>
+```
+
+Maven 就会去 `settings.xml` 中找同名的：
+
+```xml
+<server>
+    <id>maven-snapshots</id>
+</server>
+```
+
+然后使用这组账号密码完成上传。
+
+#### 9.11 下载资源需要的配置
+
+下载资源主要是让 Maven 知道：
+
+> 以后下载依赖时，先走公司私服仓库组。
+
+通常在 Maven `settings.xml` 中配置 `mirror`。
+
+例如：
+
+```xml
+<mirror>
+    <id>maven-public</id>
+    <mirrorOf>*</mirrorOf>
+    <url>http://192.168.150.101:8081/repository/maven-public/</url>
+</mirror>
+```
+
+其中：
+
+- `id`：镜像名称
+- `mirrorOf`：要代理哪些仓库
+- `url`：私服仓库组地址
+
+`mirrorOf=*` 可以理解为：
+
+```text
+所有仓库请求都统一走这个私服地址。
+```
+
+有时还会在 `profiles` 中配置 release 和 snapshot 是否允许下载：
+
+```xml
+<releases>
+    <enabled>true</enabled>
+</releases>
+
+<snapshots>
+    <enabled>true</enabled>
+</snapshots>
+```
+
+这表示：
+
+```text
+正式版本可以下载
+快照版本也可以下载
+```
+
+#### 9.12 私服配置速查
+
+| 配置 | 常见位置 | 主要作用 |
+|------|----------|----------|
+| `server` | Maven `settings.xml` | 配置访问私服的账号密码 |
+| `distributionManagement` | 项目 `pom.xml` | 配置项目发布到哪个私服仓库 |
+| `mirror` | Maven `settings.xml` | 配置依赖下载时走哪个私服入口 |
+| `profile` | Maven `settings.xml` | 配置 release / snapshot 等下载规则 |
+
+最短记法：
+
+```text
+server 管账号
+distributionManagement 管上传
+mirror 管下载入口
+profile 管下载规则
+```
+
+再压缩成两句话：
+
+```text
+上传：settings 配账号，pom 配地址，执行 deploy。
+下载：settings 配入口，pom 写依赖，Maven 自动找。
+```
+
+#### 9.13 Maven 高级主线收束
+
+Maven 高级这一组可以串成一条线：
+
+```text
+分模块设计：把项目按职责拆开
+继承：把公共配置交给父工程统一管理
+聚合：在父工程中一键构建多个模块
+私服：把团队内部 jar 包发布出去，让其他项目复用
+```
+
+也就是：
+
+> 先把项目内部结构管清楚，再把团队之间的依赖共享管清楚。
+
 ---
 
 ## 学习进度追踪
@@ -1343,10 +1624,10 @@ Maven 仓库可以分为：
 - [x] 分模块设计
 - [x] 继承
 - [x] 聚合
-- [ ] 私服
+- [x] 私服
 
 ---
 
 > 创建时间：2026-04-21
-> 最后更新：2026-05-24
-> 学习进度：3 / 9
+> 最后更新：2026-05-25
+> 学习进度：9 / 9
